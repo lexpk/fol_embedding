@@ -14,5 +14,4 @@ classifiers = [
 
 [tool.maturin]
 python-source = "python"
-sdist-include = ["Cargo.lock"]
 
