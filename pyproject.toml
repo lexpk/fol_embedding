@@ -3,7 +3,7 @@ requires = ["maturin>=0.13,<0.14"]
 build-backend = "maturin"
 
 [project]
-name = "learned_equational_rewriting"
+name = "fol_embedding"
 requires-python = ">=3.7"
 classifiers = [
     "Programming Language :: Rust",

@@ -23,23 +23,23 @@ impl PyEnvironment {
 
     fn declare_function(
         &mut self,
-        name: String,
-        argument_type: Vec<String>,
-        result_type: String,
+        name: &str,
+        argument_type: Vec<&str>,
+        result_type: &str,
     ) -> PyResult<()> {
         self.env
             .declare_function(name, argument_type, result_type)?;
         Ok(())
     }
 
-    fn declare_axiom(&mut self, l: String, r: String) -> PyResult<()> {
-        self.env.declare_axiom(l, r)?;
+    fn declare_sequent(&mut self, s: &str) -> PyResult<()> {
+        self.env.declare_sequent(s)?;
         Ok(())
     }
 }
 
 #[pymodule]
-fn learned_equational_rewriting(_py: Python, m: &PyModule) -> PyResult<()> {
+fn fol_embedding(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<PyEnvironment>()?;
     Ok(())
 }
@@ -54,6 +54,9 @@ impl std::convert::From<Error> for PyErr {
             Error::DeclaredTwice(s) => {
                 PyValueError::new_err(format!("{} has been declared twice!", s))
             }
+            Error::IllegalSequent(s) => {
+                PyValueError::new_err(format!("Illegal Sequent {}", s))
+            },
         }
     }
 }
