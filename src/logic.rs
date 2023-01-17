@@ -1,3 +1,4 @@
+use pyo3::{prelude::*};
 use std::collections::HashMap;
 
 ///Stores logical context.
@@ -26,7 +27,7 @@ impl Context {
 
 ///Structure for representing terms.
 #[derive(Clone, Hash, PartialEq, Eq)]
-enum Term {
+pub enum Term {
     Variable(usize),
     Function(usize, Vec<Term>),
 }
@@ -45,6 +46,24 @@ impl Term {
                 *f,
                 args.iter().map(|arg| arg.apply(t)).collect::<Vec<Term>>(),
             ),
+        }
+    }
+
+    fn to_pyobject(&self, _py: Python, ctx: &Context) -> PyObject {
+        match self {
+            Term::Variable(x) => {
+                let name: String = format!("?{}", x);
+                let args : Vec<PyObject> = vec![];
+                return (name, args).to_object(_py);
+            }
+            Term::Function(f, args) => {
+                let name = ctx.functionname.get(f).unwrap();
+                let args = args
+                    .iter()
+                    .map(|arg| arg.to_pyobject(_py, ctx))
+                    .collect::<Vec<PyObject>>();
+                (name, args).to_object(_py)
+            }
         }
     }
 }
@@ -139,7 +158,7 @@ impl Environment {
         }
     }
 
-    pub fn declare_sort(&mut self, sortname: &str) {
+    fn declare_sort(&mut self, sortname: &str) -> Option<String> {
         if !self.context.sortid.contains_key(sortname) {
             self.context
                 .sortid
@@ -147,6 +166,10 @@ impl Environment {
             self.context
                 .sortname
                 .insert(self.context.sortid.len(), String::from(sortname));
+            Some(String::from(sortname))
+        }
+        else {
+            None
         }
     }
 
@@ -155,10 +178,17 @@ impl Environment {
         functionname: &str,
         argsorts: Vec<&str>,
         resultsort: &str,
-    ) -> Result<()> {
-        self.declare_sort(resultsort);
+    ) -> Result<(Vec<String>, (String, Vec<String>, String))> {
+        let mut newsorts = Vec::new();
+        match self.declare_sort(resultsort) {
+            Some(s) => newsorts.push(s),
+            None => (),
+        }
         for sort in argsorts.iter() {
-            self.declare_sort(sort);
+            match self.declare_sort(sort) {
+                Some(s) => newsorts.push(s),
+                None => (),
+            }
         }
         if !self.context.functionid.contains_key(functionname) {
             self.context.functionid.insert(
@@ -176,11 +206,11 @@ impl Environment {
             self.context.argsorts.insert(
                 self.context.argsorts.len(),
                 argsorts
-                    .into_iter()
-                    .map(|s| self.context.sortid.get(s).unwrap().clone())
+                    .iter()
+                    .map(|s| self.context.sortid.get(*s).unwrap().clone())
                     .collect(),
             );
-            Ok(())
+            Ok((newsorts, (String::from(functionname), argsorts.iter().map(|x| String::from(*x)).collect(), String::from(resultsort))))
         } else {
             Err(Error::AlreadyDeclared(functionname.to_owned()))
         }
@@ -208,7 +238,7 @@ impl Environment {
         let mut acc = String::new();
         let mut tokens = Vec::new();
         let mut depth = 0;
-        for c in s.chars() {
+        for c in t.chars() {
             match (depth, c) {
                 (0, '(') => depth += 1,
                 (1, ')') => {
@@ -232,7 +262,10 @@ impl Environment {
             }
         }
         let mut tokens = tokens.into_iter();
-        let name = tokens.next().unwrap();
+        let name = match tokens.next() {
+            Some(s) => s,
+            None => return Err(Error::IllegalTerm(String::from(s))),
+        };
         let mut args = Vec::new();
         for s in tokens {
             args.push(self.read_term(s.as_str(), variables)?);
@@ -288,7 +321,7 @@ impl Environment {
 
     fn show_equation(&self, eq: &Equation) -> String {
         format!(
-            "(= {} {})",
+            "{} = {}",
             self.show_term(&eq.lhs),
             self.show_term(&eq.rhs)
         )
@@ -335,39 +368,26 @@ impl Environment {
         )
     }
 
-    pub fn declare_sequent(&mut self, s: &str) -> Result<()> {
+    pub fn declare_sequent(&mut self, _py: Python, s: &str) -> Result<(Vec<(PyObject, PyObject)>, Vec<(PyObject, PyObject)>)> {
         let seq = self.read_sequent(s)?;
+        let mut lhs = Vec::new();
+        let mut rhs = Vec::new();
+        for eq in seq.lhs.iter() {
+            lhs.push((eq.lhs.to_pyobject(_py, &self.context), eq.rhs.to_pyobject(_py, &self.context)));
+        }
+        for eq in seq.rhs.iter() {
+            rhs.push((eq.lhs.to_pyobject(_py, &self.context), eq.rhs.to_pyobject(_py, &self.context)));
+        }
         self.sequents.push(seq);
-        Ok(())
+        Ok((lhs, rhs))
     }
 }
 
-impl<'a> ToString for Environment {
+impl ToString for Environment {
     fn to_string(&self) -> String {
         let mut s = String::new();
-        for (name, id) in self.context.sortid.iter() {
-            s.push_str(&format!("(declare-sort {} {}))", name, id));
-        }
-        for (name, id) in self.context.functionid.iter() {
-            s.push_str(&format!(
-                "(declare-fun {} ({}) {})",
-                name,
-                self.context
-                    .argsorts
-                    .get(id)
-                    .unwrap()
-                    .iter()
-                    .map(|x| self.context.sortname.get(x).unwrap().clone())
-                    .collect::<Vec<String>>()
-                    .join(" "),
-                self.context
-                    .sortname
-                    .get(self.context.resultsort.get(id).unwrap())
-                    .unwrap()
-            ));
-        }
         for seq in self.sequents.iter() {
-            s.push_str(&format!("(assert {})", self.show_sequent(seq)));
+            s.push_str(&format!("{}\n", self.show_sequent(seq)));
         }
         return s;
     }
@@ -380,5 +400,38 @@ pub enum Error {
     Undeclared(String),
     AlreadyDeclared(String),
     DeclaredTwice(String),
+    IllegalTerm(String),
     IllegalSequent(String),
+}
+
+impl ToString for Error {
+    fn to_string(&self) -> String {
+        match self {
+            Error::Undeclared(s) => format!("Undeclared function: {}", s),
+            Error::AlreadyDeclared(s) => format!("Already declared function: {}", s),
+            Error::DeclaredTwice(s) => format!("Declared twice: {}", s),
+            Error::IllegalTerm(s) => format!("Illegal term: {}", s),
+            Error::IllegalSequent(s) => format!("Illegal sequent: {}", s),
+        }
+    }
+}
+
+//write tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_read_term() {
+        let mut env = Environment::new();
+        match env.declare_function("f", vec!["A"], "A"){
+            Ok(_) => (),
+            Err(e) => panic!("{}", e.to_string()),
+        }
+        match env.declare_function("s", vec![], "A"){ 
+            Ok(_) => (),
+            Err(e) => panic!("{}", e.to_string()),
+        }
+        env.read_sequent("(f s) = x => (f s) = x").unwrap();
+    }
 }

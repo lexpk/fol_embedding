@@ -6,6 +6,12 @@ use logic::{Environment, Error};
 #[pyclass(name = "Environment")]
 struct PyEnvironment {
     env: Environment,
+    #[pyo3(get)]
+    sorts: Vec<String>,
+    #[pyo3(get)]
+    functions: Vec<(String, Vec<String>, String)>,
+    #[pyo3(get)]
+    sequents: Vec<(Vec<(PyObject, PyObject)>, Vec<(PyObject, PyObject)>)>,
 }
 
 #[pymethods]
@@ -14,6 +20,9 @@ impl PyEnvironment {
     fn new() -> Self {
         PyEnvironment {
             env: Environment::new(),
+            sorts: Vec::new(),
+            functions: Vec::new(),
+            sequents: Vec::new(),
         }
     }
 
@@ -27,13 +36,17 @@ impl PyEnvironment {
         argument_type: Vec<&str>,
         result_type: &str,
     ) -> PyResult<()> {
-        self.env
-            .declare_function(name, argument_type, result_type)?;
+        match self.env.declare_function(name, argument_type, result_type)? {
+            (newsorts, (name, argument_type, result_type)) => {
+                self.sorts.extend(newsorts);
+                self.functions.push((name, argument_type, result_type));
+            }
+        }
         Ok(())
     }
 
-    fn declare_sequent(&mut self, s: &str) -> PyResult<()> {
-        self.env.declare_sequent(s)?;
+    fn declare_sequent(&mut self,  _py: Python, s: &str) -> PyResult<()> {
+        self.sequents.push(self.env.declare_sequent(_py, s)?);
         Ok(())
     }
 }
@@ -54,9 +67,8 @@ impl std::convert::From<Error> for PyErr {
             Error::DeclaredTwice(s) => {
                 PyValueError::new_err(format!("{} has been declared twice!", s))
             }
-            Error::IllegalSequent(s) => {
-                PyValueError::new_err(format!("Illegal Sequent {}", s))
-            },
+            Error::IllegalSequent(s) => PyValueError::new_err(format!("Illegal Sequent {}", s)),
+            Error::IllegalTerm(s) => PyValueError::new_err(format!("Illegal Term {}", s)),
         }
     }
 }
